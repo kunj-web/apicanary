@@ -1,0 +1,84 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: apicanary-db
+    environment:
+      POSTGRES_USER: apicanary
+      POSTGRES_PASSWORD: apicanary
+      POSTGRES_DB: apicanary
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U apicanary"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: apicanary-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  backend:
+    image: python:3.10-slim
+    container_name: apicanary-api
+    command: sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - /app/__pycache__
+    working_dir: /app
+    environment:
+      - DATABASE_URL=postgresql://apicanary:apicanary@postgres:5432/apicanary
+      - REDIS_URL=redis://redis:6379
+      - ENVIRONMENT=development
+      - DEBUG=true
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - postgres
+      - redis
+
+  celery:
+    image: python:3.10-slim
+    container_name: apicanary-celery
+    command: sh -c "pip install -r requirements.txt && celery -A app.tasks worker --loglevel=info"
+    volumes:
+      - ./backend:/app
+      - /app/__pycache__
+    working_dir: /app
+    environment:
+      - DATABASE_URL=postgresql://apicanary:apicanary@postgres:5432/apicanary
+      - REDIS_URL=redis://redis:6379
+      - ENVIRONMENT=development
+      - PYTHONUNBUFFERED=1
+    depends_on:
+      - postgres
+      - redis
+
+  frontend:
+    image: node:18-alpine
+    container_name: apicanary-web
+    command: npm run dev
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    working_dir: /app
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - NODE_ENV=development
+    depends_on:
+      - backend
+
+volumes:
+  postgres_data:
+  redis_data:

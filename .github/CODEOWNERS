@@ -1,0 +1,12 @@
+# Default owners for the entire repository
+* @kunj-web
+
+# CI and infrastructure
+.github/@kunj-web
+Dockerfile @kunj-web
+docker-compose.yml @kunj-web
+Makefile @kunj-web
+
+# Configuration
+pyproject.toml @kunj-web
+.pre-commit-config.yaml @kunj-web
