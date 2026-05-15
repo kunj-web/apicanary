@@ -1,11 +1,10 @@
 from datetime import datetime, timezone
 from sqlalchemy import Column, String, Integer, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 import uuid
 
-Base = declarative_base()
+from app.models.base import Base
 
 
 class Incident(Base):
