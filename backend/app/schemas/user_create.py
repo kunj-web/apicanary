@@ -1,8 +1,5 @@
 from pydantic import BaseModel, EmailStr, Field
-from datetime import datetime
-from typing import Optional, Dict, Any
-from uuid import UUID
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import field_validator
 import re
 
 
