@@ -2,8 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-import os
 from contextlib import asynccontextmanager
+from app.routes import auth_router, monitors_router, alerts_router
 
 # Load environment variables FIRST
 load_dotenv()
@@ -35,8 +35,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-from app.routes import auth_router, monitors_router, alerts_router
 
 app.include_router(auth_router)
 app.include_router(monitors_router)

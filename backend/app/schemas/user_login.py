@@ -1,7 +1,4 @@
-from pydantic import BaseModel, EmailStr, Field
-from datetime import datetime
-from typing import Optional, Dict, Any
-from uuid import UUID
+from pydantic import BaseModel, EmailStr
 
 
 class UserLogin(BaseModel):

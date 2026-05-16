@@ -1,7 +1,5 @@
-from pydantic import BaseModel, EmailStr, Field
-from datetime import datetime
+from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any
-from uuid import UUID
 
 
 class MonitorCreate(BaseModel):

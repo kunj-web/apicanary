@@ -4,7 +4,6 @@ from app.schemas import AlertCreate, AlertResponse
 from app.models import User, Alert, Monitor
 from app.core.dependencies import get_db, get_current_user
 from uuid import uuid4
-from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
