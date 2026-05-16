@@ -29,7 +29,7 @@ services:
   backend:
     image: python:3.10-slim
     container_name: apicanary-api
-    command: sh -c "pip install -r requirements.txt && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    command: sh -c "pip install -r requirements.txt && alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     ports:
       - "8000:8000"
     volumes:
@@ -43,13 +43,15 @@ services:
       - DEBUG=true
       - PYTHONUNBUFFERED=1
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   celery:
     image: python:3.10-slim
     container_name: apicanary-celery
-    command: sh -c "pip install -r requirements.txt && celery -A app.tasks worker --loglevel=info"
+    command: sh -c "pip install -r requirements.txt && celery -A app.tasks.celery worker --loglevel=info"
     volumes:
       - ./backend:/app
       - /app/__pycache__
@@ -60,8 +62,27 @@ services:
       - ENVIRONMENT=development
       - PYTHONUNBUFFERED=1
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  celery-beat:
+    image: python:3.10-slim
+    container_name: apicanary-beat
+    command: sh -c "pip install -r requirements.txt && celery -A app.tasks.celery beat --loglevel=info"
+    volumes:
+      - ./backend:/app
+      - /app/__pycache__
+    working_dir: /app
+    environment:
+      - DATABASE_URL=postgresql://apicanary:apicanary@postgres:5432/apicanary
+      - REDIS_URL=redis://redis:6379
+      - ENVIRONMENT=development
+      - PYTHONUNBUFFERED=1
+    depends_on:
       - redis
+      - postgres
 
   frontend:
     image: node:18-alpine
