@@ -36,6 +36,8 @@ services:
       - ./backend:/app
       - /app/__pycache__
     working_dir: /app
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://apicanary:apicanary@postgres:5432/apicanary
       - REDIS_URL=redis://redis:6379
@@ -56,6 +58,8 @@ services:
       - ./backend:/app
       - /app/__pycache__
     working_dir: /app
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://apicanary:apicanary@postgres:5432/apicanary
       - REDIS_URL=redis://redis:6379
@@ -75,6 +79,8 @@ services:
       - ./backend:/app
       - /app/__pycache__
     working_dir: /app
+    env_file:
+      - .env
     environment:
       - DATABASE_URL=postgresql://apicanary:apicanary@postgres:5432/apicanary
       - REDIS_URL=redis://redis:6379
@@ -94,9 +100,8 @@ services:
       - ./frontend:/app
       - /app/node_modules
     working_dir: /app
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-      - NODE_ENV=development
+    env_file:
+      - .env
     depends_on:
       - backend
 
