@@ -4,7 +4,8 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from app.tasks.celery import celery_app
 from app.core.database import SessionLocal
-from app.models import Monitor, Check, Incident
+from app.models import Monitor, Check, Incident, Alert
+from app.services.alert_service import send_email_alert, send_recovery_email
 
 @celery_app.task
 def check_monitor(monitor_id: str):
@@ -12,7 +13,7 @@ def check_monitor(monitor_id: str):
     db = SessionLocal()
     try:
         monitor = db.query(Monitor).filter(Monitor.id == monitor_id).first()
-        if not monitor or monitor.status != "active":
+        if not monitor or monitor.status not in ("active", "down"):
             return
 
         start_time = time.time()
@@ -34,14 +35,14 @@ def check_monitor(monitor_id: str):
             response_body = response.text[:1000]
 
             if status_code == monitor.expected_status:
-                status = 1  # success
+                status = 1
             else:
-                status = 0  # failed
+                status = 0
                 error_message = f"Expected {monitor.expected_status}, got {status_code}"
 
         except requests.exceptions.Timeout:
             response_time = 30000
-            status = -1  # timeout
+            status = -1
             error_message = "Request timed out"
 
         except requests.exceptions.ConnectionError:
@@ -65,14 +66,12 @@ def check_monitor(monitor_id: str):
 
         # Handle incidents
         if status != 1:
-            # Check if incident already exists
             existing_incident = db.query(Incident).filter(
                 Incident.monitor_id == monitor.id,
                 Incident.status == "ongoing"
             ).first()
 
             if not existing_incident:
-                # Create new incident
                 incident = Incident(
                     id=uuid4(),
                     monitor_id=monitor.id,
@@ -81,8 +80,27 @@ def check_monitor(monitor_id: str):
                 )
                 db.add(incident)
                 db.commit()
+
+                # Update monitor status to down
+                monitor.status = "down"
+                db.commit()
+
+                # Send alert emails — only on new incident
+                alerts = db.query(Alert).filter(
+                    Alert.monitor_id == monitor.id,
+                    Alert.is_active == True,
+                    Alert.alert_type == "email"
+                ).all()
+
+                for alert in alerts:
+                    send_email_alert(
+                        recipient=alert.recipient,
+                        monitor_name=monitor.name,
+                        monitor_url=monitor.url,
+                        error_message=error_message or "Unknown error",
+                    )
+
         else:
-            # Resolve any ongoing incidents
             ongoing = db.query(Incident).filter(
                 Incident.monitor_id == monitor.id,
                 Incident.status == "ongoing"
@@ -95,6 +113,25 @@ def check_monitor(monitor_id: str):
                 ongoing.duration_minutes = int(duration.total_seconds() / 60)
                 db.commit()
 
+                # Update monitor status back to active
+                monitor.status = "active"
+                db.commit()
+
+                # Send recovery emails — only when incident resolves
+                alerts = db.query(Alert).filter(
+                    Alert.monitor_id == monitor.id,
+                    Alert.is_active == True,
+                    Alert.alert_type == "email"
+                ).all()
+
+                for alert in alerts:
+                    send_recovery_email(
+                        recipient=alert.recipient,
+                        monitor_name=monitor.name,
+                        monitor_url=monitor.url,
+                        duration_minutes=ongoing.duration_minutes or 0,
+                    )
+
     finally:
         db.close()
 
@@ -104,7 +141,7 @@ def schedule_all_monitors():
     """Schedule checks for all active monitors"""
     db = SessionLocal()
     try:
-        monitors = db.query(Monitor).filter(Monitor.status == "active").all()
+        monitors = db.query(Monitor).filter(Monitor.status.in_(["active", "down"])).all()
         for monitor in monitors:
             check_monitor.delay(str(monitor.id))
     finally:
