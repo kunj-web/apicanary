@@ -73,7 +73,7 @@ export default function SignupPage() {
             <label className="text-sm font-medium text-gray-700 block mb-1">Password</label>
             <input
               type="password"
-              placeholder="Min 12 chars, uppercase, number, special char"
+              placeholder="Min 8 chars, uppercase, number, special char"
               value={form.password}
               onChange={(e) => setForm({ ...form, password: e.target.value })}
               className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-blue-500"
