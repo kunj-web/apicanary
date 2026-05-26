@@ -51,7 +51,7 @@ async def create_alert(
                 recipient=alert_data.recipient,
                 monitor_name=monitor.name,
                 monitor_url=monitor.url,
-                error_message=f"Monitor was already down when alert was created",
+                error_message="Monitor was already down when alert was created",
             )
 
     return AlertResponse.model_validate(alert)

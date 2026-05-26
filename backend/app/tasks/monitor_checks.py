@@ -88,7 +88,7 @@ def check_monitor(monitor_id: str):
                 # Send alert emails — only on new incident
                 alerts = db.query(Alert).filter(
                     Alert.monitor_id == monitor.id,
-                    Alert.is_active == True,
+                    Alert.is_active,
                     Alert.alert_type == "email"
                 ).all()
 
@@ -120,7 +120,7 @@ def check_monitor(monitor_id: str):
                 # Send recovery emails — only when incident resolves
                 alerts = db.query(Alert).filter(
                     Alert.monitor_id == monitor.id,
-                    Alert.is_active == True,
+                    Alert.is_active,
                     Alert.alert_type == "email"
                 ).all()
 
