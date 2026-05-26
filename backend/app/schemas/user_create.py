@@ -35,15 +35,3 @@ class UserCreate(BaseModel):
             )
 
         return v
-
-    @field_validator('full_name')
-    @classmethod
-    def validate_full_name(cls, v):
-        cleaned = " ".join(v.split())
-
-        if len(cleaned.split()) < 2:
-            raise ValueError(
-                'Full name must contain first and last name'
-            )
-
-        return cleaned
