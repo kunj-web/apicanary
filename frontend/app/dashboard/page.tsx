@@ -48,7 +48,7 @@ function AlertsPanel({
     if (res.ok) setAlerts(await res.json());
   };
 
-  const createAlert = async (e: React.FormEvent) => {
+  const createAlert = async (e: React.SyntheticEvent) => {
     e.preventDefault();
     const res = await fetch("http://localhost:8000/api/alerts", {
       method: "POST",
