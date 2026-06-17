@@ -1,46 +1,68 @@
-# Learning Python to Depth
+# APICanary
 
-A collection of detailed notes, examples, and explanations created while learning Python from first principles.
+API monitoring and alerting platform that helps developers track uptime, response times, and service health from a single dashboard.
 
-## Goal
+## Features
 
-The goal of this repository is to build a deep understanding of Python by focusing on:
+* User authentication
+* API monitor management
+* Automated health checks
+* Incident tracking
+* Email alerts
+* Monitoring dashboard
+* Historical check data
 
-* Computational thinking
-* Core Python concepts
-* Problem solving
-* Writing clean and readable code
-* Understanding how Python works under the hood
+## Tech Stack
 
-## Structure
+### Frontend
 
-```text
-python/
-├── 01-computational-thinking-and-python-basics.md
-├── 02-strings.md
-├── 03-conditionals.md
-└── ...
+* Next.js
+* TypeScript
+* Tailwind CSS
+
+### Backend
+
+* FastAPI
+* PostgreSQL
+* SQLAlchemy
+* Celery
+* Redis
+
+## Getting Started
+
+Install dependencies:
+
+```bash
+npm install
 ```
 
-## Contents
+Start the development server:
 
-### Python
+```bash
+npm run dev
+```
 
-* 1. Computational Thinking and Python Basics
+Open `http://localhost:3000` in your browser.
 
-More lectures and notes will be added as learning progresses.
+## Project Structure
 
-## Why This Repository?
+```text
+app/            # Pages and routes
+components/     # Reusable UI components
+hooks/          # Custom hooks
+lib/            # API and utility functions
+types/          # TypeScript types
+```
 
-Most tutorials focus on syntax.
+## Available Scripts
 
-This repository focuses on understanding:
+```bash
+npm run dev      # Start development server
+npm run build    # Create production build
+npm start        # Start production server
+npm run lint     # Run linting
+```
 
-* Why things work
-* How Python evaluates code
-* Common mistakes beginners make
-* Practical examples and explanations
+## Status
 
-## License
-
-This repository is intended for learning and educational purposes.
+APICanary is currently under active development.
