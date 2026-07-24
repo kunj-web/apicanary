@@ -1,12 +1,16 @@
+import logging
+
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from app.schemas import MonitorCreate, MonitorResponse
 from app.models import User, Monitor
 from app.core.dependencies import get_db, get_current_user
-from uuid import uuid4
+from app.tasks.monitor_checks import check_monitor
+from uuid import UUID, uuid4
 from datetime import datetime, timezone
 
 router = APIRouter(prefix="/api/monitors", tags=["monitors"])
+logger = logging.getLogger(__name__)
 
 @router.post("", response_model=MonitorResponse)
 async def create_monitor(
@@ -43,7 +47,7 @@ async def list_monitors(
 
 @router.get("/{monitor_id}", response_model=MonitorResponse)
 async def get_monitor(
-    monitor_id: str,
+    monitor_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -63,7 +67,7 @@ async def get_monitor(
 
 @router.put("/{monitor_id}", response_model=MonitorResponse)
 async def update_monitor(
-    monitor_id: str,
+    monitor_id: UUID,
     monitor_data: MonitorCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -95,7 +99,7 @@ async def update_monitor(
 
 @router.delete("/{monitor_id}")
 async def delete_monitor(
-    monitor_id: str,
+    monitor_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -115,9 +119,9 @@ async def delete_monitor(
     db.commit()
     return {"message": "Monitor deleted"}
 
-@router.post("/{monitor_id}/test")
+@router.post("/{monitor_id}/test", status_code=status.HTTP_202_ACCEPTED)
 async def test_monitor(
-    monitor_id: str,
+    monitor_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -133,12 +137,20 @@ async def test_monitor(
             detail="Monitor not found"
         )
     
-    # TODO: Implement actual check logic
-    return {"message": "Check initiated"}
+    try:
+        task = check_monitor.delay(str(monitor.id), True)
+    except Exception as exc:
+        logger.exception("Failed to queue manual check for monitor %s", monitor.id)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Monitoring worker is unavailable",
+        ) from exc
 
-@router.post("/{monitor_id}/pause")
+    return {"message": "Check queued", "task_id": task.id}
+
+@router.post("/{monitor_id}/pause", response_model=MonitorResponse)
 async def pause_monitor(
-    monitor_id: str,
+    monitor_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
@@ -155,6 +167,31 @@ async def pause_monitor(
         )
     
     monitor.status = "paused"
+    monitor.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(monitor)
+    return MonitorResponse.model_validate(monitor)
+
+
+@router.post("/{monitor_id}/resume", response_model=MonitorResponse)
+async def resume_monitor(
+    monitor_id: UUID,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Resume automatic monitoring."""
+    monitor = db.query(Monitor).filter(
+        Monitor.id == monitor_id,
+        Monitor.user_id == current_user.id
+    ).first()
+
+    if not monitor:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Monitor not found"
+        )
+
+    monitor.status = "active"
     monitor.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(monitor)
