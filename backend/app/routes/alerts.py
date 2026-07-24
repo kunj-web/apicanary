@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends, status
 from sqlalchemy.orm import Session
 from app.schemas import AlertCreate, AlertResponse
-from app.models import User, Alert, Monitor, Incident
+from app.models import User, Alert, Monitor, Incident, Check
 from app.core.dependencies import get_db, get_current_user
 from app.services.alert_service import send_email_alert
 from uuid import uuid4
@@ -46,7 +46,19 @@ async def create_alert(
             Incident.status == "ongoing"
         ).first()
 
-        if ongoing and alert_data.alert_type == "email":
+        failure_count = 0
+        if ongoing:
+            failure_count = db.query(Check).filter(
+                Check.monitor_id == monitor.id,
+                Check.checked_at >= ongoing.started_at,
+                Check.status != 1,
+            ).count()
+
+        if (
+            ongoing
+            and alert_data.alert_type == "email"
+            and failure_count >= alert_data.threshold_failures
+        ):
             send_email_alert(
                 recipient=alert_data.recipient,
                 monitor_name=monitor.name,

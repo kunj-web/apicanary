@@ -1,5 +1,6 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 interface Monitor {
@@ -37,16 +38,23 @@ function AlertsPanel({
     threshold_failures: 1,
   });
 
-  useEffect(() => {
-    fetchAlerts();
-  }, []);
-
-  const fetchAlerts = async () => {
+  const fetchAlerts = useCallback(async (): Promise<Alert[] | null> => {
     const res = await fetch("http://localhost:8000/api/alerts", {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (res.ok) setAlerts(await res.json());
-  };
+    if (!res.ok) return null;
+    return res.json();
+  }, [token]);
+
+  useEffect(() => {
+    let active = true;
+    void fetchAlerts().then((nextAlerts) => {
+      if (active && nextAlerts) setAlerts(nextAlerts);
+    });
+    return () => {
+      active = false;
+    };
+  }, [fetchAlerts]);
 
   const createAlert = async (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -66,7 +74,8 @@ function AlertsPanel({
         recipient: "",
         threshold_failures: 1,
       });
-      fetchAlerts();
+      const nextAlerts = await fetchAlerts();
+      if (nextAlerts) setAlerts(nextAlerts);
     }
   };
 
@@ -75,7 +84,8 @@ function AlertsPanel({
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     });
-    fetchAlerts();
+    const nextAlerts = await fetchAlerts();
+    if (nextAlerts) setAlerts(nextAlerts);
   };
 
   const getMonitorName = (id: string) =>
@@ -272,6 +282,11 @@ export default function Dashboard() {
   const [showForm, setShowForm] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("monitors");
+  const [busyMonitorId, setBusyMonitorId] = useState<string | null>(null);
+  const [actionFeedback, setActionFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
   const [form, setForm] = useState({
     name: "",
     url: "",
@@ -283,30 +298,49 @@ export default function Dashboard() {
   const token =
     typeof window !== "undefined" ? localStorage.getItem("token") : null;
 
+  const fetchMonitors = useCallback(async (): Promise<Monitor[] | null> => {
+    const res = await fetch("http://localhost:8000/api/monitors", {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.status === 401) {
+      router.push("/login");
+      return null;
+    }
+    if (!res.ok) {
+      throw new Error("Failed to load monitors");
+    }
+    return res.json();
+  }, [router, token]);
+
   useEffect(() => {
     if (!token) {
       router.push("/login");
       return;
     }
-    fetchMonitors();
-  }, []);
-
-  const fetchMonitors = async () => {
-    try {
-      const res = await fetch("http://localhost:8000/api/monitors", {
-        headers: { Authorization: `Bearer ${token}` },
+    let active = true;
+    void fetchMonitors()
+      .then((nextMonitors) => {
+        if (active && nextMonitors) setMonitors(nextMonitors);
+      })
+      .catch(() => {
+        console.error("Failed to load monitors");
+      })
+      .finally(() => {
+        if (active) setLoading(false);
       });
-      if (res.status === 401) {
-        router.push("/login");
-        return;
-      }
-      setMonitors(await res.json());
+    return () => {
+      active = false;
+    };
+  }, [fetchMonitors, router, token]);
+
+  const refreshMonitors = useCallback(async () => {
+    try {
+      const nextMonitors = await fetchMonitors();
+      if (nextMonitors) setMonitors(nextMonitors);
     } catch {
-      console.error("Failed");
-    } finally {
-      setLoading(false);
+      console.error("Failed to refresh monitors");
     }
-  };
+  }, [fetchMonitors]);
 
   const createMonitor = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -327,7 +361,7 @@ export default function Dashboard() {
         expected_status: 200,
         check_interval: 5,
       });
-      fetchMonitors();
+      await refreshMonitors();
     }
   };
 
@@ -336,17 +370,66 @@ export default function Dashboard() {
       method: "DELETE",
       headers: { Authorization: `Bearer ${token}` },
     });
-    fetchMonitors();
+    await refreshMonitors();
+  };
+
+  const runMonitorAction = async (
+    monitor: Monitor,
+    action: "test" | "pause" | "resume",
+  ) => {
+    setBusyMonitorId(monitor.id);
+    setActionFeedback(null);
+
+    try {
+      const res = await fetch(
+        `http://localhost:8000/api/monitors/${monitor.id}/${action}`,
+        {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}` },
+        },
+      );
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 401) {
+        localStorage.removeItem("token");
+        router.push("/login");
+        return;
+      }
+      if (!res.ok) {
+        throw new Error(data.detail || `Could not ${action} monitor`);
+      }
+
+      if (action !== "test") {
+        await refreshMonitors();
+      }
+      setActionFeedback({
+        type: "success",
+        message:
+          action === "test"
+            ? `${monitor.name}: manual check queued`
+            : `${monitor.name}: monitoring ${action === "pause" ? "paused" : "resumed"}`,
+      });
+    } catch (error) {
+      setActionFeedback({
+        type: "error",
+        message:
+          error instanceof Error ? error.message : "Monitor action failed",
+      });
+    } finally {
+      setBusyMonitorId(null);
+    }
   };
 
   const statusColor = (status: string) => {
     if (status === "active") return "bg-emerald-100 text-emerald-700";
+    if (status === "down") return "bg-red-100 text-red-700";
     if (status === "paused") return "bg-yellow-100 text-yellow-700";
     return "bg-gray-100 text-gray-500";
   };
 
   const statusDot = (status: string) => {
     if (status === "active") return "bg-emerald-500";
+    if (status === "down") return "bg-red-500";
     if (status === "paused") return "bg-yellow-500";
     return "bg-gray-400";
   };
@@ -359,6 +442,7 @@ export default function Dashboard() {
   ];
 
   const upCount = monitors.filter((m) => m.status === "active").length;
+  const downCount = monitors.filter((m) => m.status === "down").length;
   const totalCount = monitors.length;
 
   return (
@@ -382,9 +466,9 @@ export default function Dashboard() {
       >
         {/* Logo */}
         <div className="px-6 py-5 border-b border-gray-100 flex items-center justify-between">
-          <a href="/" className="text-lg font-bold text-gray-900">
+          <Link href="/" className="text-lg font-bold text-gray-900">
             🐦 APICanary
-          </a>
+          </Link>
           <button
             className="md:hidden text-gray-400 hover:text-gray-600"
             onClick={() => setSidebarOpen(false)}
@@ -407,7 +491,7 @@ export default function Dashboard() {
             </div>
             <div className="text-center">
               <p className="text-2xl font-bold text-red-500">
-                {totalCount - upCount}
+                {downCount}
               </p>
               <p className="text-xs text-gray-500">Down</p>
             </div>
@@ -496,6 +580,19 @@ export default function Dashboard() {
         <main className="flex-1 p-6">
           {activeNav === "monitors" && (
             <>
+              {actionFeedback && (
+                <div
+                  className={`mb-4 rounded-lg border px-4 py-3 text-sm ${
+                    actionFeedback.type === "success"
+                      ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+                      : "border-red-200 bg-red-50 text-red-700"
+                  }`}
+                  role="status"
+                >
+                  {actionFeedback.message}
+                </div>
+              )}
+
               {loading && (
                 <div className="flex items-center justify-center py-20 text-gray-400">
                   <div className="text-center">
@@ -557,17 +654,41 @@ export default function Dashboard() {
                         {monitor.url}
                       </p>
 
-                      <div className="flex justify-between items-center">
+                      <div className="flex justify-between items-center gap-3">
                         <div className="flex items-center gap-4 text-xs text-gray-400">
                           <span>🕐 Every {monitor.check_interval}m</span>
                           <span>✓ {monitor.expected_status}</span>
                         </div>
-                        <button
-                          onClick={() => deleteMonitor(monitor.id)}
-                          className="text-xs text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
-                        >
-                          Delete
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={() => runMonitorAction(monitor, "test")}
+                            disabled={busyMonitorId === monitor.id}
+                            className="text-xs text-blue-600 hover:text-blue-800 disabled:opacity-40"
+                          >
+                            Test
+                          </button>
+                          <button
+                            onClick={() =>
+                              runMonitorAction(
+                                monitor,
+                                monitor.status === "paused"
+                                  ? "resume"
+                                  : "pause",
+                              )
+                            }
+                            disabled={busyMonitorId === monitor.id}
+                            className="text-xs text-amber-600 hover:text-amber-800 disabled:opacity-40"
+                          >
+                            {monitor.status === "paused" ? "Resume" : "Pause"}
+                          </button>
+                          <button
+                            onClick={() => deleteMonitor(monitor.id)}
+                            disabled={busyMonitorId === monitor.id}
+                            className="text-xs text-gray-400 hover:text-red-500 transition-colors disabled:opacity-40"
+                          >
+                            Delete
+                          </button>
+                        </div>
                       </div>
                     </div>
                   ))}
