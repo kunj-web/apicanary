@@ -108,13 +108,19 @@ apicanary/
 
 ## 🔐 Security
 
-APICanary takes security seriously:
+Current security controls include:
 
-- JWT authentication
-- Encrypted API keys in database
-- HTTPS only in production
-- Rate limiting on all endpoints
-- Regular security audits
+- JWT bearer authentication for API clients
+- HttpOnly, SameSite browser session cookies with CSRF checks
+- Encrypted and response-redacted sensitive monitor headers
+- Runtime blocking of private, loopback, link-local, and reserved targets
+- Strict monitor URL, HTTP method, alert type, and recipient validation
+
+For production, set `ENVIRONMENT=production`, provide unique
+`SECRET_KEY` and `MONITOR_ENCRYPTION_KEY` values of at least 32 characters,
+and set `TRUSTED_ORIGINS` to the exact frontend origins. The frontend uses
+the server-only `BACKEND_URL` setting to proxy `/api` requests; see the
+included `.env.example` files.
 
 ## 📝 License
 

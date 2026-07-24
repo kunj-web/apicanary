@@ -19,10 +19,12 @@ os.environ.setdefault("ALERT_FROM_EMAIL", "alerts@example.com")
 
 from app.models import Base, Monitor, User
 from app.routes.monitors import (
+    create_monitor,
     pause_monitor,
     resume_monitor,
     test_monitor as test_monitor_route,
 )
+from app.schemas import MonitorCreate
 
 
 class MonitorActionRouteTests(unittest.TestCase):
@@ -122,6 +124,34 @@ class MonitorActionRouteTests(unittest.TestCase):
 
         self.assertEqual(paused.status, "paused")
         self.assertEqual(resumed.status, "active")
+
+    def test_sensitive_headers_are_encrypted_and_response_is_redacted(self):
+        with self.TestSession() as db:
+            created = asyncio.run(
+                create_monitor(
+                    monitor_data=MonitorCreate(
+                        name="Secured API",
+                        url="https://example.com/private",
+                        headers={
+                            "Authorization": "Bearer top-secret",
+                            "Accept": "application/json",
+                        },
+                    ),
+                    current_user=self.get_user(db),
+                    db=db,
+                )
+            )
+            stored = db.get(Monitor, created.id)
+
+        self.assertNotIn("top-secret", stored.headers["Authorization"])
+        self.assertEqual(
+            created.headers["Authorization"],
+            "[REDACTED]",
+        )
+        self.assertEqual(
+            created.headers["Accept"],
+            "application/json",
+        )
 
 
 if __name__ == "__main__":

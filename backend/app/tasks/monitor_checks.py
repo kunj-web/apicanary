@@ -9,8 +9,17 @@ import requests
 from sqlalchemy import func, select
 
 from app.core.database import SessionLocal
+from app.core.header_crypto import (
+    HeaderDecryptionError,
+    protect_headers,
+    reveal_headers,
+)
 from app.models import Alert, Check, Incident, Monitor
 from app.services.alert_service import send_email_alert, send_recovery_email
+from app.services.monitor_security import (
+    UnsafeMonitorTarget,
+    validate_monitor_target,
+)
 from app.tasks.celery import celery_app
 
 logger = logging.getLogger(__name__)
@@ -30,6 +39,7 @@ class MonitorSnapshot:
     body: Optional[dict[str, Any]]
     expected_status: int
     status: str
+    configuration_error: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -88,15 +98,32 @@ def _load_monitor_snapshot(
         if not monitor or monitor.status not in allowed_statuses:
             return None
 
+        raw_headers = dict(monitor.headers) if monitor.headers else None
+        configuration_error = None
+        try:
+            request_headers = reveal_headers(raw_headers)
+        except HeaderDecryptionError:
+            request_headers = None
+            configuration_error = (
+                "Stored monitor credentials could not be decrypted"
+            )
+
+        # Transparently protect legacy plaintext credentials on first use.
+        protected_headers = protect_headers(raw_headers)
+        if protected_headers != raw_headers:
+            monitor.headers = protected_headers
+            db.commit()
+
         return MonitorSnapshot(
             id=monitor.id,
             name=monitor.name,
             url=monitor.url,
             method=monitor.method,
-            headers=dict(monitor.headers) if monitor.headers else None,
+            headers=request_headers,
             body=dict(monitor.body) if monitor.body else None,
             expected_status=monitor.expected_status,
             status=monitor.status,
+            configuration_error=configuration_error,
         )
 
 
@@ -104,17 +131,31 @@ def _perform_http_check(monitor: MonitorSnapshot) -> CheckResult:
     """Execute a monitor request and convert every outcome into a check result."""
     started_at = time.monotonic()
 
+    if monitor.configuration_error:
+        return CheckResult(
+            status=-1,
+            response_time=0,
+            status_code=None,
+            response_body=None,
+            error_message=monitor.configuration_error,
+            checked_at=datetime.now(timezone.utc),
+        )
+
     try:
-        with requests.request(
-            method=monitor.method,
-            url=monitor.url,
-            headers=monitor.headers or {},
-            json=monitor.body,
-            timeout=REQUEST_TIMEOUT_SECONDS,
-        ) as response:
-            response_time = int((time.monotonic() - started_at) * 1000)
-            status_code = response.status_code
-            response_body = response.text[:MAX_RESPONSE_BODY_LENGTH]
+        validate_monitor_target(monitor.url)
+        with requests.Session() as session:
+            session.trust_env = False
+            with session.request(
+                method=monitor.method,
+                url=monitor.url,
+                headers=monitor.headers or {},
+                json=monitor.body,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+                allow_redirects=False,
+            ) as response:
+                response_time = int((time.monotonic() - started_at) * 1000)
+                status_code = response.status_code
+                response_body = response.text[:MAX_RESPONSE_BODY_LENGTH]
 
         if status_code == monitor.expected_status:
             return CheckResult(
@@ -136,6 +177,8 @@ def _perform_http_check(monitor: MonitorSnapshot) -> CheckResult:
             ),
             checked_at=datetime.now(timezone.utc),
         )
+    except UnsafeMonitorTarget as exc:
+        error_message = f"Blocked unsafe target: {exc}"
     except requests.exceptions.Timeout:
         error_message = "Request timed out"
     except requests.exceptions.ConnectionError:

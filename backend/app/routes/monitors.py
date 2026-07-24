@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from app.schemas import MonitorCreate, MonitorResponse
 from app.models import User, Monitor
 from app.core.dependencies import get_db, get_current_user
+from app.core.header_crypto import protect_headers, protect_updated_headers
 from app.tasks.monitor_checks import check_monitor
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
@@ -25,7 +26,7 @@ async def create_monitor(
         name=monitor_data.name,
         url=str(monitor_data.url),
         method=monitor_data.method,
-        headers=monitor_data.headers,
+        headers=protect_headers(monitor_data.headers),
         body=monitor_data.body,
         expected_status=monitor_data.expected_status,
         check_interval=monitor_data.check_interval,
@@ -87,7 +88,10 @@ async def update_monitor(
     monitor.name = monitor_data.name
     monitor.url = str(monitor_data.url)
     monitor.method = monitor_data.method
-    monitor.headers = monitor_data.headers
+    monitor.headers = protect_updated_headers(
+        monitor.headers,
+        monitor_data.headers,
+    )
     monitor.body = monitor_data.body
     monitor.expected_status = monitor_data.expected_status
     monitor.check_interval = monitor_data.check_interval
