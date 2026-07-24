@@ -59,26 +59,41 @@ class HttpCheckTests(unittest.TestCase):
             status="active",
         )
 
-    @patch("app.tasks.monitor_checks.requests.request")
-    def test_successful_response_is_recorded_as_up(self, request):
+    @patch("app.tasks.monitor_checks.validate_monitor_target")
+    @patch("app.tasks.monitor_checks.requests.Session")
+    def test_successful_response_is_recorded_as_up(
+        self,
+        session_factory,
+        validate_target,
+    ):
         response = MagicMock()
         response.status_code = 200
         response.text = "ok"
-        request.return_value.__enter__.return_value = response
+        session = session_factory.return_value.__enter__.return_value
+        session.request.return_value.__enter__.return_value = response
 
         result = _perform_http_check(self.monitor)
 
+        validate_target.assert_called_once_with(self.monitor.url)
+        self.assertFalse(session.trust_env)
+        self.assertFalse(session.request.call_args.kwargs["allow_redirects"])
         self.assertEqual(result.status, 1)
         self.assertEqual(result.status_code, 200)
         self.assertEqual(result.response_body, "ok")
         self.assertIsNone(result.error_message)
 
-    @patch("app.tasks.monitor_checks.requests.request")
-    def test_unexpected_status_is_recorded_as_failure(self, request):
+    @patch("app.tasks.monitor_checks.validate_monitor_target")
+    @patch("app.tasks.monitor_checks.requests.Session")
+    def test_unexpected_status_is_recorded_as_failure(
+        self,
+        session_factory,
+        _validate_target,
+    ):
         response = MagicMock()
         response.status_code = 503
         response.text = "unavailable"
-        request.return_value.__enter__.return_value = response
+        session = session_factory.return_value.__enter__.return_value
+        session.request.return_value.__enter__.return_value = response
 
         result = _perform_http_check(self.monitor)
 
@@ -86,10 +101,18 @@ class HttpCheckTests(unittest.TestCase):
         self.assertEqual(result.status_code, 503)
         self.assertEqual(result.error_message, "Expected 200, got 503")
 
-    @patch("app.tasks.monitor_checks.requests.request")
-    def test_any_request_exception_becomes_a_check_result(self, request):
-        request.side_effect = monitor_checks.requests.exceptions.InvalidURL(
+    @patch("app.tasks.monitor_checks.validate_monitor_target")
+    @patch("app.tasks.monitor_checks.requests.Session")
+    def test_any_request_exception_becomes_a_check_result(
+        self,
+        session_factory,
+        _validate_target,
+    ):
+        session = session_factory.return_value.__enter__.return_value
+        session.request.side_effect = (
+            monitor_checks.requests.exceptions.InvalidURL(
             "bad URL"
+            )
         )
 
         result = _perform_http_check(self.monitor)
@@ -232,6 +255,31 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(monitor.status, "paused")
         self.assertEqual(incident_count, 0)
         self.assertEqual(check_count, 1)
+
+    def test_legacy_plaintext_headers_are_protected_on_first_check(self):
+        with self.TestSession.begin() as db:
+            monitor = db.get(Monitor, self.monitor_id)
+            monitor.headers = {
+                "Authorization": "Bearer legacy-secret",
+                "Accept": "application/json",
+            }
+
+        snapshot = monitor_checks._load_monitor_snapshot(
+            str(self.monitor_id),
+            False,
+        )
+
+        with self.TestSession() as db:
+            stored = db.get(Monitor, self.monitor_id)
+
+        self.assertEqual(
+            snapshot.headers["Authorization"],
+            "Bearer legacy-secret",
+        )
+        self.assertNotIn(
+            "legacy-secret",
+            stored.headers["Authorization"],
+        )
 
     def test_incident_failure_rolls_back_the_entire_result(self):
         self.add_alert(threshold=1)

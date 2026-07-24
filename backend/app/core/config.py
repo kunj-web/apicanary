@@ -1,4 +1,9 @@
-from pydantic_settings import BaseSettings
+from pathlib import Path
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 class Settings(BaseSettings):
     DATABASE_URL: str
@@ -9,7 +14,9 @@ class Settings(BaseSettings):
     SMTP_PASSWORD: str
     ALERT_FROM_EMAIL: str
 
-    class Config:
-        env_file = ".env"
+    model_config = SettingsConfigDict(
+        env_file=PROJECT_ROOT / ".env",
+        extra="ignore",
+    )
 
 settings = Settings()

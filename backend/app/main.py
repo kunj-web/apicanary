@@ -3,14 +3,31 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
-from app.routes import auth_router, monitors_router, alerts_router
+import logging
 
 # Load environment variables FIRST
 load_dotenv()
 
+from app.core.security import get_trusted_origins  # noqa: E402
+from app.routes import auth_router, monitors_router, alerts_router  # noqa: E402
+from app.services.header_migration import (  # noqa: E402
+    protect_existing_monitor_headers,
+)
+
+logger = logging.getLogger(__name__)
+
 # Lifespan context manager
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    try:
+        migrated = protect_existing_monitor_headers()
+        if migrated:
+            logger.info(
+                "Protected sensitive headers for %s existing monitors",
+                migrated,
+            )
+    except Exception:
+        logger.exception("Could not migrate legacy monitor headers")
     print("🚀 APICanary API starting...")
     yield
     print("🛑 APICanary API shutting down...")
@@ -25,11 +42,7 @@ app = FastAPI(
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3000",
-    ],
+    allow_origins=list(get_trusted_origins()),
     allow_credentials=True,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],

@@ -1,6 +1,7 @@
 "use client";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { apiFetch, clearLegacyToken } from "@/app/lib/api";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -14,7 +15,7 @@ export default function SignupPage() {
     setError("");
 
     try {
-      const res = await fetch("http://localhost:8000/api/auth/signup", {
+      const res = await apiFetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(form),
@@ -27,7 +28,7 @@ export default function SignupPage() {
         return;
       }
 
-      localStorage.setItem("token", data.access_token);
+      clearLegacyToken();
       router.push("/dashboard");
     } catch {
       setError("Something went wrong. Try again.");

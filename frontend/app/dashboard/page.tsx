@@ -2,6 +2,11 @@
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import {
+  apiFetch,
+  clearLegacyToken,
+  migrateLegacySession,
+} from "@/app/lib/api";
 
 interface Monitor {
   id: string;
@@ -23,10 +28,8 @@ interface Alert {
 }
 
 function AlertsPanel({
-  token,
   monitors,
 }: {
-  token: string | null;
   monitors: Monitor[];
 }) {
   const [alerts, setAlerts] = useState<Alert[]>([]);
@@ -39,12 +42,10 @@ function AlertsPanel({
   });
 
   const fetchAlerts = useCallback(async (): Promise<Alert[] | null> => {
-    const res = await fetch("http://localhost:8000/api/alerts", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    const res = await apiFetch("/api/alerts");
     if (!res.ok) return null;
     return res.json();
-  }, [token]);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -58,11 +59,10 @@ function AlertsPanel({
 
   const createAlert = async (e: React.SyntheticEvent) => {
     e.preventDefault();
-    const res = await fetch("http://localhost:8000/api/alerts", {
+    const res = await apiFetch("/api/alerts", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(form),
     });
@@ -80,9 +80,8 @@ function AlertsPanel({
   };
 
   const deleteAlert = async (id: string) => {
-    await fetch(`http://localhost:8000/api/alerts/${id}`, {
+    await apiFetch(`/api/alerts/${id}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
     });
     const nextAlerts = await fetchAlerts();
     if (nextAlerts) setAlerts(nextAlerts);
@@ -295,13 +294,11 @@ export default function Dashboard() {
     check_interval: 5,
   });
 
-  const token =
-    typeof window !== "undefined" ? localStorage.getItem("token") : null;
-
   const fetchMonitors = useCallback(async (): Promise<Monitor[] | null> => {
-    const res = await fetch("http://localhost:8000/api/monitors", {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+    let res = await apiFetch("/api/monitors");
+    if (res.status === 401 && (await migrateLegacySession())) {
+      res = await apiFetch("/api/monitors");
+    }
     if (res.status === 401) {
       router.push("/login");
       return null;
@@ -310,13 +307,9 @@ export default function Dashboard() {
       throw new Error("Failed to load monitors");
     }
     return res.json();
-  }, [router, token]);
+  }, [router]);
 
   useEffect(() => {
-    if (!token) {
-      router.push("/login");
-      return;
-    }
     let active = true;
     void fetchMonitors()
       .then((nextMonitors) => {
@@ -331,7 +324,7 @@ export default function Dashboard() {
     return () => {
       active = false;
     };
-  }, [fetchMonitors, router, token]);
+  }, [fetchMonitors]);
 
   const refreshMonitors = useCallback(async () => {
     try {
@@ -344,11 +337,10 @@ export default function Dashboard() {
 
   const createMonitor = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch("http://localhost:8000/api/monitors", {
+    const res = await apiFetch("/api/monitors", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
       },
       body: JSON.stringify(form),
     });
@@ -366,9 +358,8 @@ export default function Dashboard() {
   };
 
   const deleteMonitor = async (id: string) => {
-    await fetch(`http://localhost:8000/api/monitors/${id}`, {
+    await apiFetch(`/api/monitors/${id}`, {
       method: "DELETE",
-      headers: { Authorization: `Bearer ${token}` },
     });
     await refreshMonitors();
   };
@@ -381,17 +372,15 @@ export default function Dashboard() {
     setActionFeedback(null);
 
     try {
-      const res = await fetch(
-        `http://localhost:8000/api/monitors/${monitor.id}/${action}`,
+      const res = await apiFetch(
+        `/api/monitors/${monitor.id}/${action}`,
         {
           method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
         },
       );
       const data = await res.json().catch(() => ({}));
 
       if (res.status === 401) {
-        localStorage.removeItem("token");
         router.push("/login");
         return;
       }
@@ -531,8 +520,9 @@ export default function Dashboard() {
         {/* Logout */}
         <div className="px-3 py-4 border-t border-gray-100">
           <button
-            onClick={() => {
-              localStorage.removeItem("token");
+            onClick={async () => {
+              await apiFetch("/api/auth/logout", { method: "POST" });
+              clearLegacyToken();
               router.push("/");
             }}
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium text-gray-600 hover:bg-red-50 hover:text-red-600 transition-colors"
@@ -698,7 +688,7 @@ export default function Dashboard() {
           )}
 
           {activeNav === "alerts" && (
-            <AlertsPanel token={token} monitors={monitors} />
+            <AlertsPanel monitors={monitors} />
           )}
 
           {activeNav !== "monitors" && activeNav !== "alerts" && (

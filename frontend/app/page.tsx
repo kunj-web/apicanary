@@ -1,14 +1,34 @@
 "use client";
 import { useEffect, useState } from "react";
+import { apiFetch, migrateLegacySession } from "@/app/lib/api";
 
 export default function Home() {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [checked, setChecked] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem("token");
-    setIsLoggedIn(!!token);
-    setChecked(true);
+    let active = true;
+    const checkSession = async () => {
+      let response = await apiFetch("/api/auth/me");
+      if (response.status === 401 && (await migrateLegacySession())) {
+        response = await apiFetch("/api/auth/me");
+      }
+      return response.ok;
+    };
+
+    void checkSession()
+      .then((isLoggedIn) => {
+        if (active) setIsLoggedIn(isLoggedIn);
+      })
+      .catch(() => {
+        if (active) setIsLoggedIn(false);
+      })
+      .finally(() => {
+        if (active) setChecked(true);
+      });
+    return () => {
+      active = false;
+    };
   }, []);
 
   if (!checked) return null;
