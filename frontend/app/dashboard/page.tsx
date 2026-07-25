@@ -4,19 +4,17 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   apiFetch,
+  authenticatedFetch,
   clearLegacyToken,
-  migrateLegacySession,
 } from "@/app/lib/api";
-
-interface Monitor {
-  id: string;
-  name: string;
-  url: string;
-  method: string;
-  status: string;
-  check_interval: number;
-  expected_status: number;
-}
+import {
+  apiErrorMessage,
+  formatDate,
+  formatDuration,
+  type Incident,
+  type Monitor,
+  type PaginatedResponse,
+} from "@/app/lib/monitoring";
 
 interface Alert {
   id: string;
@@ -33,6 +31,9 @@ function AlertsPanel({
   monitors: Monitor[];
 }) {
   const [alerts, setAlerts] = useState<Alert[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({
     monitor_id: "",
@@ -41,17 +42,35 @@ function AlertsPanel({
     threshold_failures: 1,
   });
 
-  const fetchAlerts = useCallback(async (): Promise<Alert[] | null> => {
-    const res = await apiFetch("/api/alerts");
-    if (!res.ok) return null;
+  const fetchAlerts = useCallback(async (): Promise<Alert[]> => {
+    const res = await authenticatedFetch("/api/alerts");
+    if (!res.ok) {
+      throw new Error(await apiErrorMessage(res, "Could not load alerts"));
+    }
     return res.json();
   }, []);
 
   useEffect(() => {
     let active = true;
-    void fetchAlerts().then((nextAlerts) => {
-      if (active && nextAlerts) setAlerts(nextAlerts);
-    });
+    void fetchAlerts()
+      .then((nextAlerts) => {
+        if (active) {
+          setAlerts(nextAlerts);
+          setError(null);
+        }
+      })
+      .catch((fetchError) => {
+        if (active) {
+          setError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Could not load alerts",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
     return () => {
       active = false;
     };
@@ -59,14 +78,19 @@ function AlertsPanel({
 
   const createAlert = async (e: React.SyntheticEvent) => {
     e.preventDefault();
-    const res = await apiFetch("/api/alerts", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(form),
-    });
-    if (res.ok) {
+    setSaving(true);
+    setError(null);
+    try {
+      const res = await authenticatedFetch("/api/alerts", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) {
+        throw new Error(await apiErrorMessage(res, "Could not create alert"));
+      }
       setShowForm(false);
       setForm({
         monitor_id: "",
@@ -75,16 +99,40 @@ function AlertsPanel({
         threshold_failures: 1,
       });
       const nextAlerts = await fetchAlerts();
-      if (nextAlerts) setAlerts(nextAlerts);
+      setAlerts(nextAlerts);
+    } catch (saveError) {
+      setError(
+        saveError instanceof Error
+          ? saveError.message
+          : "Could not create alert",
+      );
+    } finally {
+      setSaving(false);
     }
   };
 
   const deleteAlert = async (id: string) => {
-    await apiFetch(`/api/alerts/${id}`, {
-      method: "DELETE",
-    });
-    const nextAlerts = await fetchAlerts();
-    if (nextAlerts) setAlerts(nextAlerts);
+    setSaving(true);
+    setError(null);
+    try {
+      const response = await authenticatedFetch(`/api/alerts/${id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new Error(
+          await apiErrorMessage(response, "Could not delete alert"),
+        );
+      }
+      setAlerts(await fetchAlerts());
+    } catch (deleteError) {
+      setError(
+        deleteError instanceof Error
+          ? deleteError.message
+          : "Could not delete alert",
+      );
+    } finally {
+      setSaving(false);
+    }
   };
 
   const getMonitorName = (id: string) =>
@@ -109,7 +157,22 @@ function AlertsPanel({
         </button>
       </div>
 
-      {alerts.length === 0 && !showForm && (
+      {error && (
+        <div
+          role="alert"
+          className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+        >
+          {error}
+        </div>
+      )}
+
+      {loading && (
+        <div className="flex items-center justify-center py-20 text-sm text-gray-500">
+          Loading alerts…
+        </div>
+      )}
+
+      {!loading && alerts.length === 0 && !showForm && (
         <div className="flex items-center justify-center py-20">
           <div className="text-center">
             <div className="text-5xl mb-4">🔔</div>
@@ -173,6 +236,7 @@ function AlertsPanel({
             <div className="flex justify-end">
               <button
                 onClick={() => deleteAlert(alert.id)}
+                disabled={saving}
                 className="text-xs text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
               >
                 Delete
@@ -197,6 +261,14 @@ function AlertsPanel({
               </button>
             </div>
             <form onSubmit={createAlert} className="flex flex-col gap-4">
+              {error && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+                >
+                  {error}
+                </div>
+              )}
               <div>
                 <label className="text-sm font-medium text-gray-700 block mb-1">
                   Monitor
@@ -261,9 +333,10 @@ function AlertsPanel({
                 </button>
                 <button
                   type="submit"
+                  disabled={saving}
                   className="flex-1 bg-black text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-800"
                 >
-                  Save Alert
+                  {saving ? "Saving…" : "Save Alert"}
                 </button>
               </div>
             </form>
@@ -274,11 +347,207 @@ function AlertsPanel({
   );
 }
 
+function IncidentsPanel() {
+  const router = useRouter();
+  const [data, setData] = useState<PaginatedResponse<Incident>>({
+    items: [],
+    total: 0,
+    page: 1,
+    page_size: 20,
+    total_pages: 0,
+  });
+  const [page, setPage] = useState(1);
+  const [filter, setFilter] = useState<"all" | "ongoing" | "resolved">(
+    "all",
+  );
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadIncidents = useCallback(async () => {
+    await Promise.resolve();
+    setLoading(true);
+    setError(null);
+    try {
+      const statusQuery = filter === "all" ? "" : `&status=${filter}`;
+      const response = await authenticatedFetch(
+        `/api/incidents?page=${page}&page_size=20${statusQuery}`,
+      );
+      if (response.status === 401) {
+        router.replace("/login");
+        return;
+      }
+      if (!response.ok) {
+        throw new Error(
+          await apiErrorMessage(response, "Could not load incidents"),
+        );
+      }
+      setData(await response.json());
+    } catch (fetchError) {
+      setError(
+        fetchError instanceof Error
+          ? fetchError.message
+          : "Could not load incidents",
+      );
+    } finally {
+      setLoading(false);
+    }
+  }, [filter, page, router]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadIncidents();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadIncidents]);
+
+  return (
+    <div>
+      <div className="mb-6 flex flex-col justify-between gap-3 sm:flex-row sm:items-center">
+        <div>
+          <h2 className="text-base font-semibold text-gray-900">
+            Incidents
+          </h2>
+          <p className="mt-0.5 text-xs text-gray-400">
+            Downtime across all of your monitors
+          </p>
+        </div>
+        <select
+          value={filter}
+          onChange={(event) => {
+            setFilter(
+              event.target.value as "all" | "ongoing" | "resolved",
+            );
+            setPage(1);
+          }}
+          className="rounded-lg border border-gray-200 bg-white px-3 py-2 text-sm text-gray-700 outline-none focus:border-blue-500"
+          aria-label="Filter incidents"
+        >
+          <option value="all">All incidents</option>
+          <option value="ongoing">Ongoing</option>
+          <option value="resolved">Resolved</option>
+        </select>
+      </div>
+
+      {loading ? (
+        <div className="flex min-h-64 items-center justify-center rounded-2xl border border-gray-100 bg-white text-sm text-gray-500">
+          Loading incidents…
+        </div>
+      ) : error ? (
+        <div
+          role="alert"
+          className="flex min-h-64 flex-col items-center justify-center gap-3 rounded-2xl border border-red-100 bg-red-50 p-6 text-center text-sm text-red-700"
+        >
+          <p>{error}</p>
+          <button
+            type="button"
+            onClick={() => void loadIncidents()}
+            className="font-semibold underline"
+          >
+            Try again
+          </button>
+        </div>
+      ) : data.items.length === 0 ? (
+        <div className="flex min-h-64 flex-col items-center justify-center rounded-2xl border border-gray-100 bg-white p-6 text-center">
+          <h3 className="font-semibold text-gray-900">
+            {filter === "all"
+              ? "No incidents recorded"
+              : `No ${filter} incidents`}
+          </h3>
+          <p className="mt-2 text-sm text-gray-500">
+            Downtime events will appear here when a monitor fails.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-2xl border border-gray-100 bg-white p-5 shadow-sm">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-175 text-left text-sm">
+              <thead className="border-b border-gray-100 text-xs uppercase text-gray-400">
+                <tr>
+                  <th className="pb-3 font-medium">Monitor</th>
+                  <th className="pb-3 font-medium">Status</th>
+                  <th className="pb-3 font-medium">Started</th>
+                  <th className="pb-3 font-medium">Resolved</th>
+                  <th className="pb-3 font-medium">Duration</th>
+                  <th className="pb-3 font-medium" />
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {data.items.map((incident) => (
+                  <tr key={incident.id}>
+                    <td className="py-4 font-medium text-gray-900">
+                      {incident.monitor_name}
+                    </td>
+                    <td className="py-4">
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-semibold capitalize ${
+                          incident.status === "ongoing"
+                            ? "bg-red-100 text-red-700"
+                            : "bg-emerald-100 text-emerald-700"
+                        }`}
+                      >
+                        {incident.status}
+                      </span>
+                    </td>
+                    <td className="whitespace-nowrap py-4 text-gray-600">
+                      {formatDate(incident.started_at)}
+                    </td>
+                    <td className="whitespace-nowrap py-4 text-gray-500">
+                      {formatDate(incident.resolved_at)}
+                    </td>
+                    <td className="py-4 text-gray-600">
+                      {formatDuration(incident.duration_minutes)}
+                    </td>
+                    <td className="py-4 text-right">
+                      <Link
+                        href={`/dashboard/monitors/${incident.monitor_id}`}
+                        className="text-xs font-semibold text-blue-600 hover:text-blue-800"
+                      >
+                        View monitor
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          {data.total_pages > 1 && (
+            <div className="mt-4 flex items-center justify-between border-t border-gray-100 pt-4">
+              <span className="text-xs text-gray-500">
+                Page {data.page} of {data.total_pages}
+              </span>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => current - 1)}
+                  disabled={data.page <= 1}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 disabled:opacity-40"
+                >
+                  Previous
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPage((current) => current + 1)}
+                  disabled={data.page >= data.total_pages}
+                  className="rounded-lg border border-gray-200 px-3 py-1.5 text-xs font-medium text-gray-700 disabled:opacity-40"
+                >
+                  Next
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Dashboard() {
   const router = useRouter();
   const [monitors, setMonitors] = useState<Monitor[]>([]);
   const [loading, setLoading] = useState(true);
+  const [monitorError, setMonitorError] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [creating, setCreating] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [activeNav, setActiveNav] = useState("monitors");
   const [busyMonitorId, setBusyMonitorId] = useState<string | null>(null);
@@ -295,16 +564,15 @@ export default function Dashboard() {
   });
 
   const fetchMonitors = useCallback(async (): Promise<Monitor[] | null> => {
-    let res = await apiFetch("/api/monitors");
-    if (res.status === 401 && (await migrateLegacySession())) {
-      res = await apiFetch("/api/monitors");
-    }
+    const res = await authenticatedFetch("/api/monitors");
     if (res.status === 401) {
       router.push("/login");
       return null;
     }
     if (!res.ok) {
-      throw new Error("Failed to load monitors");
+      throw new Error(
+        await apiErrorMessage(res, "Failed to load monitors"),
+      );
     }
     return res.json();
   }, [router]);
@@ -313,10 +581,19 @@ export default function Dashboard() {
     let active = true;
     void fetchMonitors()
       .then((nextMonitors) => {
-        if (active && nextMonitors) setMonitors(nextMonitors);
+        if (active && nextMonitors) {
+          setMonitors(nextMonitors);
+          setMonitorError(null);
+        }
       })
-      .catch(() => {
-        console.error("Failed to load monitors");
+      .catch((fetchError) => {
+        if (active) {
+          setMonitorError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Failed to load monitors",
+          );
+        }
       })
       .finally(() => {
         if (active) setLoading(false);
@@ -329,22 +606,36 @@ export default function Dashboard() {
   const refreshMonitors = useCallback(async () => {
     try {
       const nextMonitors = await fetchMonitors();
-      if (nextMonitors) setMonitors(nextMonitors);
-    } catch {
-      console.error("Failed to refresh monitors");
+      if (nextMonitors) {
+        setMonitors(nextMonitors);
+        setMonitorError(null);
+      }
+    } catch (refreshError) {
+      setMonitorError(
+        refreshError instanceof Error
+          ? refreshError.message
+          : "Failed to refresh monitors",
+      );
     }
   }, [fetchMonitors]);
 
   const createMonitor = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await apiFetch("/api/monitors", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(form),
-    });
-    if (res.ok) {
+    setCreating(true);
+    setActionFeedback(null);
+    try {
+      const res = await authenticatedFetch("/api/monitors", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(form),
+      });
+      if (!res.ok) {
+        throw new Error(
+          await apiErrorMessage(res, "Could not create monitor"),
+        );
+      }
       setShowForm(false);
       setForm({
         name: "",
@@ -354,14 +645,59 @@ export default function Dashboard() {
         check_interval: 5,
       });
       await refreshMonitors();
+      setActionFeedback({
+        type: "success",
+        message: "Monitor created.",
+      });
+    } catch (createError) {
+      setActionFeedback({
+        type: "error",
+        message:
+          createError instanceof Error
+            ? createError.message
+            : "Could not create monitor",
+      });
+    } finally {
+      setCreating(false);
     }
   };
 
   const deleteMonitor = async (id: string) => {
-    await apiFetch(`/api/monitors/${id}`, {
-      method: "DELETE",
-    });
-    await refreshMonitors();
+    const monitor = monitors.find((item) => item.id === id);
+    if (
+      !window.confirm(
+        `Delete ${monitor?.name ?? "this monitor"} and all of its history?`,
+      )
+    ) {
+      return;
+    }
+    setBusyMonitorId(id);
+    setActionFeedback(null);
+    try {
+      const response = await authenticatedFetch(`/api/monitors/${id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        throw new Error(
+          await apiErrorMessage(response, "Could not delete monitor"),
+        );
+      }
+      await refreshMonitors();
+      setActionFeedback({
+        type: "success",
+        message: "Monitor deleted.",
+      });
+    } catch (deleteError) {
+      setActionFeedback({
+        type: "error",
+        message:
+          deleteError instanceof Error
+            ? deleteError.message
+            : "Could not delete monitor",
+      });
+    } finally {
+      setBusyMonitorId(null);
+    }
   };
 
   const runMonitorAction = async (
@@ -372,7 +708,7 @@ export default function Dashboard() {
     setActionFeedback(null);
 
     try {
-      const res = await apiFetch(
+      const res = await authenticatedFetch(
         `/api/monitors/${monitor.id}/${action}`,
         {
           method: "POST",
@@ -551,7 +887,11 @@ export default function Dashboard() {
               <p className="text-xs text-gray-400">
                 {activeNav === "monitors"
                   ? `${totalCount} monitors, ${upCount} active`
-                  : "Coming soon"}
+                  : activeNav === "incidents"
+                    ? "Downtime and recovery history"
+                    : activeNav === "alerts"
+                      ? "Notification rules"
+                      : "Account preferences"}
               </p>
             </div>
           </div>
@@ -583,6 +923,22 @@ export default function Dashboard() {
                 </div>
               )}
 
+              {monitorError && (
+                <div
+                  role="alert"
+                  className="mb-4 flex items-center justify-between gap-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+                >
+                  <span>{monitorError}</span>
+                  <button
+                    type="button"
+                    onClick={() => void refreshMonitors()}
+                    className="font-semibold underline"
+                  >
+                    Retry
+                  </button>
+                </div>
+              )}
+
               {loading && (
                 <div className="flex items-center justify-center py-20 text-gray-400">
                   <div className="text-center">
@@ -592,7 +948,7 @@ export default function Dashboard() {
                 </div>
               )}
 
-              {!loading && monitors.length === 0 && (
+              {!loading && !monitorError && monitors.length === 0 && (
                 <div className="flex items-center justify-center py-20">
                   <div className="text-center max-w-sm">
                     <div className="text-6xl mb-4">📡</div>
@@ -626,7 +982,12 @@ export default function Dashboard() {
                           />
                           <div>
                             <h3 className="font-semibold text-gray-900 text-sm">
-                              {monitor.name}
+                              <Link
+                                href={`/dashboard/monitors/${monitor.id}`}
+                                className="hover:text-blue-600"
+                              >
+                                {monitor.name}
+                              </Link>
                             </h3>
                             <span className="text-xs text-gray-400">
                               {monitor.method}
@@ -650,6 +1011,12 @@ export default function Dashboard() {
                           <span>✓ {monitor.expected_status}</span>
                         </div>
                         <div className="flex items-center gap-2">
+                          <Link
+                            href={`/dashboard/monitors/${monitor.id}`}
+                            className="text-xs font-semibold text-gray-700 hover:text-black"
+                          >
+                            View
+                          </Link>
                           <button
                             onClick={() => runMonitorAction(monitor, "test")}
                             disabled={busyMonitorId === monitor.id}
@@ -691,7 +1058,9 @@ export default function Dashboard() {
             <AlertsPanel monitors={monitors} />
           )}
 
-          {activeNav !== "monitors" && activeNav !== "alerts" && (
+          {activeNav === "incidents" && <IncidentsPanel />}
+
+          {activeNav === "settings" && (
             <div className="flex items-center justify-center py-20">
               <div className="text-center">
                 <div className="text-5xl mb-4">🚧</div>
@@ -720,12 +1089,20 @@ export default function Dashboard() {
               </button>
             </div>
             <form onSubmit={createMonitor} className="flex flex-col gap-4">
+              {actionFeedback?.type === "error" && (
+                <div
+                  role="alert"
+                  className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+                >
+                  {actionFeedback.message}
+                </div>
+              )}
               <div>
                 <label className="text-sm font-medium text-gray-700 block mb-1">
                   Monitor Name
                 </label>
                 <input
-                  type="text"
+                  type="url"
                   placeholder="e.g. Login API"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -761,7 +1138,10 @@ export default function Dashboard() {
                     <option>GET</option>
                     <option>POST</option>
                     <option>PUT</option>
+                    <option>PATCH</option>
                     <option>DELETE</option>
+                    <option>HEAD</option>
+                    <option>OPTIONS</option>
                   </select>
                 </div>
                 <div>
@@ -791,6 +1171,8 @@ export default function Dashboard() {
                 </label>
                 <input
                   type="number"
+                  min={100}
+                  max={599}
                   value={form.expected_status}
                   onChange={(e) =>
                     setForm({
@@ -799,6 +1181,7 @@ export default function Dashboard() {
                     })
                   }
                   className="w-full border border-gray-200 rounded-lg px-4 py-2.5 text-sm outline-none focus:border-blue-500"
+                  required
                 />
               </div>
               <div className="flex gap-3 mt-2">
@@ -811,9 +1194,10 @@ export default function Dashboard() {
                 </button>
                 <button
                   type="submit"
-                  className="flex-1 bg-black text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-800"
+                  disabled={creating}
+                  className="flex-1 bg-black text-white py-2.5 rounded-lg text-sm font-medium hover:bg-gray-800 disabled:opacity-50"
                 >
-                  Start Monitoring
+                  {creating ? "Creating…" : "Start Monitoring"}
                 </button>
               </div>
             </form>
