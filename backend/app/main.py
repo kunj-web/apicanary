@@ -9,7 +9,12 @@ import logging
 load_dotenv()
 
 from app.core.security import get_trusted_origins  # noqa: E402
-from app.routes import auth_router, monitors_router, alerts_router  # noqa: E402
+from app.routes import (  # noqa: E402
+    alerts_router,
+    auth_router,
+    incidents_router,
+    monitors_router,
+)
 from app.services.header_migration import (  # noqa: E402
     protect_existing_monitor_headers,
 )
@@ -52,6 +57,7 @@ app.add_middleware(
 app.include_router(auth_router)
 app.include_router(monitors_router)
 app.include_router(alerts_router)
+app.include_router(incidents_router)
 
 # Health check endpoint
 @app.get("/health")

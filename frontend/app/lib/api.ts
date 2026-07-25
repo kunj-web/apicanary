@@ -40,6 +40,17 @@ export function migrateLegacySession(): Promise<boolean> {
   return legacyMigration;
 }
 
+export async function authenticatedFetch(
+  input: RequestInfo | URL,
+  init: RequestInit = {},
+): Promise<Response> {
+  let response = await apiFetch(input, init);
+  if (response.status === 401 && (await migrateLegacySession())) {
+    response = await apiFetch(input, init);
+  }
+  return response;
+}
+
 export function clearLegacyToken(): void {
   if (typeof window !== "undefined") {
     localStorage.removeItem("token");
