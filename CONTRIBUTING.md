@@ -45,17 +45,29 @@ Branch naming conventions:
 **Frontend:**
 ```bash
 cd frontend
+npm ci
 npm run lint
 npm run type-check
 npm run test
+npm run build
 ```
 
 **Backend:**
 ```bash
 cd backend
-python -m pytest
-black --check .
-flake8 .
+python -m pip install -r requirements-dev.txt
+python -m ruff check app tests migrations
+python -m unittest discover -s tests -v
+python -m alembic upgrade head
+python -m alembic check
+```
+
+**End-to-end:**
+```bash
+# Start PostgreSQL, Redis, and the backend first.
+cd frontend
+npx playwright install chromium
+npm run test:e2e
 ```
 
 ### 5. Commit and Push
@@ -135,6 +147,7 @@ Before submitting your PR:
 - [ ] Branch is based on latest `dev`
 - [ ] Code follows project style
 - [ ] Tests pass locally
+- [ ] Database migrations upgrade cleanly
 - [ ] No console errors or warnings
 - [ ] Commit messages are clear
 - [ ] PR description explains changes
@@ -161,10 +174,6 @@ Before submitting your PR:
 - Better error messages
 - Improved documentation
 - Accessibility improvements
-
-## License
-
-By contributing, you agree that your contributions will be licensed under the MIT License.
 
 ---
 

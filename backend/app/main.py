@@ -33,9 +33,9 @@ async def lifespan(app: FastAPI):
             )
     except Exception:
         logger.exception("Could not migrate legacy monitor headers")
-    print("🚀 APICanary API starting...")
+    logger.info("APICanary API starting")
     yield
-    print("🛑 APICanary API shutting down...")
+    logger.info("APICanary API shutting down")
 
 app = FastAPI(
     title="APICanary",

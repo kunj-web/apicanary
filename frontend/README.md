@@ -33,7 +33,7 @@ API monitoring and alerting platform that helps developers track uptime, respons
 Install dependencies:
 
 ```bash
-npm install
+npm ci
 ```
 
 Start the development server:
@@ -47,11 +47,9 @@ Open `http://localhost:3000` in your browser.
 ## Project Structure
 
 ```text
-app/            # Pages and routes
-components/     # Reusable UI components
-hooks/          # Custom hooks
-lib/            # API and utility functions
-types/          # TypeScript types
+app/             # App Router pages, components, and API utilities
+tests/unit/      # Vitest and Testing Library tests
+tests/e2e/       # Playwright browser journeys
 ```
 
 ## Available Scripts
@@ -61,8 +59,13 @@ npm run dev      # Start development server
 npm run build    # Create production build
 npm start        # Start production server
 npm run lint     # Run linting
+npm run type-check
+npm test         # Run frontend unit tests
+npm run test:e2e # Run Playwright (backend required)
 ```
 
 ## Status
 
-APICanary is currently under active development.
+APICanary is under active development. See the root
+[README](../README.md) for implemented features, environment setup, security
+requirements, and roadmap items.

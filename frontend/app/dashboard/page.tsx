@@ -1102,7 +1102,7 @@ export default function Dashboard() {
                   Monitor Name
                 </label>
                 <input
-                  type="url"
+                  type="text"
                   placeholder="e.g. Login API"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
@@ -1115,7 +1115,7 @@ export default function Dashboard() {
                   URL
                 </label>
                 <input
-                  type="text"
+                  type="url"
                   placeholder="https://api.example.com/health"
                   value={form.url}
                   onChange={(e) => setForm({ ...form, url: e.target.value })}
