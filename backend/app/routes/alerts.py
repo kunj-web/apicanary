@@ -4,7 +4,7 @@ from app.schemas import AlertCreate, AlertResponse
 from app.models import User, Alert, Monitor, Incident, Check
 from app.core.dependencies import get_db, get_current_user
 from app.services.alert_service import send_email_alert
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 router = APIRouter(prefix="/api/alerts", tags=["alerts"])
 
@@ -81,7 +81,7 @@ async def list_alerts(
 
 @router.delete("/{alert_id}")
 async def delete_alert(
-    alert_id: str,
+    alert_id: UUID,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
