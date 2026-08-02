@@ -5,7 +5,7 @@ celery_app = Celery(
     "apicanary",
     broker=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
     backend=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-    include=["app.tasks.monitor_checks"]
+    include=["app.tasks.monitor_checks", "app.tasks.notifications"]
 )
 
 celery_app.conf.update(
@@ -18,6 +18,10 @@ celery_app.conf.update(
         "schedule-all-monitors": {
             "task": "app.tasks.monitor_checks.schedule_all_monitors",
             "schedule": 60.0, 
+        },
+        "dispatch-pending-notifications": {
+            "task": "app.tasks.notifications.dispatch_pending_deliveries",
+            "schedule": 30.0,
         },
     }
 )

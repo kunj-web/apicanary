@@ -85,4 +85,24 @@ test("a user can create, edit, pause, and inspect a monitor", async ({
   await page.getByRole("link", { name: "All monitors" }).click();
   await page.getByRole("button", { name: /Incidents/ }).click();
   await expect(page.getByText("No incidents recorded")).toBeVisible();
+
+  await page.getByRole("button", { name: /Alerts/ }).click();
+  await page.getByRole("button", { name: /Add Alert$/ }).click();
+  const alertDialog = page.getByRole("dialog", { name: "Add Email Alert" });
+  await alertDialog.locator("select").first().selectOption({
+    label: updatedName,
+  });
+  await alertDialog
+    .getByPlaceholder("you@example.com")
+    .fill(`alerts-${suffix}@example.com`);
+  await alertDialog.getByRole("button", { name: "Save Alert" }).click();
+
+  await expect(
+    page.getByText(`alerts-${suffix}@example.com`).first(),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Send test" }).click();
+  await expect(page.getByRole("status")).toContainText(
+    "Test alert saved for delivery",
+  );
+  await expect(page.getByText("test", { exact: true })).toBeVisible();
 });

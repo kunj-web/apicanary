@@ -16,7 +16,15 @@ os.environ.setdefault("SMTP_USER", "test")
 os.environ.setdefault("SMTP_PASSWORD", "test")
 os.environ.setdefault("ALERT_FROM_EMAIL", "alerts@example.com")
 
-from app.models import Alert, Base, Check, Incident, Monitor, User
+from app.models import (
+    Alert,
+    Base,
+    Check,
+    Incident,
+    Monitor,
+    NotificationDelivery,
+    User,
+)
 from app.tasks import monitor_checks
 from app.tasks.monitor_checks import (
     CheckResult,
@@ -220,20 +228,31 @@ class PersistenceTests(unittest.TestCase):
         self.assertEqual(state, "recorded")
         self.assertEqual(first_notifications, [])
         self.assertEqual(len(second_notifications), 1)
-        self.assertEqual(second_notifications[0]["kind"], "failure")
         self.assertEqual(third_notifications, [])
         self.assertEqual(len(recovery_notifications), 1)
-        self.assertEqual(recovery_notifications[0]["kind"], "recovery")
 
         with self.TestSession() as db:
             monitor = db.get(Monitor, self.monitor_id)
             incidents = db.scalars(select(Incident)).all()
             checks = db.scalars(select(Check)).all()
+            deliveries = db.scalars(
+                select(NotificationDelivery).order_by(
+                    NotificationDelivery.created_at.asc()
+                )
+            ).all()
 
         self.assertEqual(monitor.status, "active")
         self.assertEqual(len(checks), 4)
         self.assertEqual(len(incidents), 1)
         self.assertEqual(incidents[0].status, "resolved")
+        self.assertEqual(
+            {str(delivery.id) for delivery in deliveries},
+            {second_notifications[0], recovery_notifications[0]},
+        )
+        self.assertEqual(
+            {delivery.event_type for delivery in deliveries},
+            {"failure", "recovery"},
+        )
 
     def test_paused_manual_check_does_not_change_monitor_state(self):
         with self.TestSession.begin() as db:
