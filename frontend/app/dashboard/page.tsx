@@ -25,7 +25,30 @@ interface Alert {
   is_active: boolean;
 }
 
-function AlertsPanel({
+interface NotificationDelivery {
+  id: string;
+  alert_id: string | null;
+  monitor_id: string | null;
+  event_type: string;
+  channel: string;
+  recipient: string;
+  status: string;
+  attempt_count: number;
+  last_error: string | null;
+  next_attempt_at: string | null;
+  sent_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+function deliveryStatusClass(status: string): string {
+  if (status === "sent") return "bg-emerald-100 text-emerald-700";
+  if (status === "failed") return "bg-red-100 text-red-700";
+  if (status === "retrying") return "bg-amber-100 text-amber-700";
+  return "bg-blue-100 text-blue-700";
+}
+
+export function AlertsPanel({
   monitors,
 }: {
   monitors: Monitor[];
@@ -34,7 +57,12 @@ function AlertsPanel({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [testingAlertId, setTestingAlertId] = useState<string | null>(null);
   const [showForm, setShowForm] = useState(false);
+  const [feedback, setFeedback] = useState<string | null>(null);
+  const [deliveries, setDeliveries] = useState<NotificationDelivery[]>([]);
+  const [deliveriesLoading, setDeliveriesLoading] = useState(true);
+  const [deliveriesError, setDeliveriesError] = useState<string | null>(null);
   const [form, setForm] = useState({
     monitor_id: "",
     alert_type: "email",
@@ -49,6 +77,26 @@ function AlertsPanel({
     }
     return res.json();
   }, []);
+
+  const fetchDeliveries = useCallback(
+    async (): Promise<NotificationDelivery[]> => {
+      const response = await authenticatedFetch(
+        "/api/alerts/deliveries?page=1&page_size=10",
+      );
+      if (!response.ok) {
+        throw new Error(
+          await apiErrorMessage(
+            response,
+            "Could not load delivery history",
+          ),
+        );
+      }
+      const payload =
+        (await response.json()) as PaginatedResponse<NotificationDelivery>;
+      return payload.items;
+    },
+    [],
+  );
 
   useEffect(() => {
     let active = true;
@@ -75,6 +123,48 @@ function AlertsPanel({
       active = false;
     };
   }, [fetchAlerts]);
+
+  const refreshDeliveries = useCallback(async () => {
+    setDeliveriesLoading(true);
+    setDeliveriesError(null);
+    try {
+      setDeliveries(await fetchDeliveries());
+    } catch (fetchError) {
+      setDeliveriesError(
+        fetchError instanceof Error
+          ? fetchError.message
+          : "Could not load delivery history",
+      );
+    } finally {
+      setDeliveriesLoading(false);
+    }
+  }, [fetchDeliveries]);
+
+  useEffect(() => {
+    let active = true;
+    void fetchDeliveries()
+      .then((nextDeliveries) => {
+        if (active) {
+          setDeliveries(nextDeliveries);
+          setDeliveriesError(null);
+        }
+      })
+      .catch((fetchError) => {
+        if (active) {
+          setDeliveriesError(
+            fetchError instanceof Error
+              ? fetchError.message
+              : "Could not load delivery history",
+          );
+        }
+      })
+      .finally(() => {
+        if (active) setDeliveriesLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [fetchDeliveries]);
 
   const createAlert = async (e: React.SyntheticEvent) => {
     e.preventDefault();
@@ -135,6 +225,33 @@ function AlertsPanel({
     }
   };
 
+  const testAlert = async (id: string) => {
+    setTestingAlertId(id);
+    setError(null);
+    setFeedback(null);
+    try {
+      const response = await authenticatedFetch(`/api/alerts/${id}/test`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        throw new Error(
+          await apiErrorMessage(response, "Could not send test alert"),
+        );
+      }
+      const result = (await response.json()) as { message: string };
+      setFeedback(result.message);
+      await refreshDeliveries();
+    } catch (testError) {
+      setError(
+        testError instanceof Error
+          ? testError.message
+          : "Could not send test alert",
+      );
+    } finally {
+      setTestingAlertId(null);
+    }
+  };
+
   const getMonitorName = (id: string) =>
     monitors.find((m) => m.id === id)?.name || "Unknown Monitor";
 
@@ -163,6 +280,15 @@ function AlertsPanel({
           className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
         >
           {error}
+        </div>
+      )}
+
+      {feedback && (
+        <div
+          role="status"
+          className="mb-4 rounded-lg border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700"
+        >
+          {feedback}
         </div>
       )}
 
@@ -233,11 +359,20 @@ function AlertsPanel({
                 {alert.threshold_failures} failure(s)
               </span>
             </p>
-            <div className="flex justify-end">
+            <div className="flex justify-end gap-3">
               <button
-                onClick={() => deleteAlert(alert.id)}
-                disabled={saving}
-                className="text-xs text-gray-300 hover:text-red-500 transition-colors opacity-0 group-hover:opacity-100"
+                type="button"
+                onClick={() => void testAlert(alert.id)}
+                disabled={saving || testingAlertId !== null}
+                className="text-xs font-medium text-blue-600 hover:text-blue-800 disabled:opacity-40"
+              >
+                {testingAlertId === alert.id ? "Queuing..." : "Send test"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void deleteAlert(alert.id)}
+                disabled={saving || testingAlertId !== null}
+                className="text-xs text-gray-400 hover:text-red-500 transition-colors disabled:opacity-40"
               >
                 Delete
               </button>
@@ -246,16 +381,109 @@ function AlertsPanel({
         ))}
       </div>
 
+      <section className="mt-8 rounded-2xl border border-gray-100 bg-white p-5">
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <h3 className="text-sm font-semibold text-gray-900">
+              Delivery history
+            </h3>
+            <p className="mt-1 text-xs text-gray-400">
+              Latest email attempts, including retries and failures
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void refreshDeliveries()}
+            disabled={deliveriesLoading}
+            className="text-xs font-semibold text-blue-600 hover:text-blue-800 disabled:opacity-40"
+          >
+            Refresh
+          </button>
+        </div>
+
+        {deliveriesError && (
+          <div
+            role="alert"
+            className="mb-4 rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700"
+          >
+            {deliveriesError}
+          </div>
+        )}
+
+        {deliveriesLoading ? (
+          <div className="py-10 text-center text-sm text-gray-400">
+            Loading delivery history...
+          </div>
+        ) : deliveries.length === 0 ? (
+          <div className="py-10 text-center text-sm text-gray-400">
+            No notifications have been delivered yet.
+          </div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-175 text-left text-sm">
+              <thead className="border-b border-gray-100 text-xs uppercase text-gray-400">
+                <tr>
+                  <th className="pb-3 font-medium">Event</th>
+                  <th className="pb-3 font-medium">Recipient</th>
+                  <th className="pb-3 font-medium">Status</th>
+                  <th className="pb-3 font-medium">Attempts</th>
+                  <th className="pb-3 font-medium">Created</th>
+                  <th className="pb-3 font-medium">Last error</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-100">
+                {deliveries.map((delivery) => (
+                  <tr key={delivery.id}>
+                    <td className="py-3 capitalize text-gray-700">
+                      {delivery.event_type}
+                    </td>
+                    <td className="py-3 text-gray-600">
+                      {delivery.recipient}
+                    </td>
+                    <td className="py-3">
+                      <span
+                        className={`rounded-full px-2.5 py-1 text-xs font-medium ${deliveryStatusClass(delivery.status)}`}
+                      >
+                        {delivery.status}
+                      </span>
+                    </td>
+                    <td className="py-3 text-gray-600">
+                      {delivery.attempt_count}
+                    </td>
+                    <td className="whitespace-nowrap py-3 text-gray-500">
+                      {formatDate(delivery.created_at)}
+                    </td>
+                    <td className="max-w-70 truncate py-3 text-gray-500">
+                      {delivery.last_error ?? "-"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
       {showForm && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 px-4">
-          <div className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl">
+          <div
+            className="bg-white rounded-2xl p-8 w-full max-w-md shadow-2xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="add-email-alert-title"
+          >
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-lg font-bold text-gray-900">
+              <h2
+                id="add-email-alert-title"
+                className="text-lg font-bold text-gray-900"
+              >
                 Add Email Alert
               </h2>
               <button
+                type="button"
                 onClick={() => setShowForm(false)}
                 className="text-gray-400 hover:text-gray-600"
+                aria-label="Close add alert"
               >
                 ✕
               </button>

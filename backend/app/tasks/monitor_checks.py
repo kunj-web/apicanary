@@ -15,12 +15,13 @@ from app.core.header_crypto import (
     reveal_headers,
 )
 from app.models import Alert, Check, Incident, Monitor
-from app.services.alert_service import send_email_alert, send_recovery_email
+from app.services.notification_delivery import create_notification_delivery
 from app.services.monitor_security import (
     UnsafeMonitorTarget,
     validate_monitor_target,
 )
 from app.tasks.celery import celery_app
+from app.tasks.notifications import enqueue_notification_delivery
 
 logger = logging.getLogger(__name__)
 
@@ -221,9 +222,9 @@ def _persist_check_result(
     monitor_id: str,
     result: CheckResult,
     allow_paused: bool,
-) -> tuple[str, list[dict[str, Any]]]:
+) -> tuple[str, list[str]]:
     """Persist a check and its incident transition in one transaction."""
-    notifications: list[dict[str, Any]] = []
+    notifications: list[str] = []
     monitor_uuid = _as_uuid(monitor_id)
     if monitor_uuid is None:
         return "invalid", notifications
@@ -291,17 +292,20 @@ def _persist_check_result(
 
             for alert in alerts:
                 if failure_count == alert.threshold_failures:
-                    notifications.append(
-                        {
-                            "kind": "failure",
-                            "recipient": alert.recipient,
-                            "monitor_name": monitor.name,
-                            "monitor_url": monitor.url,
-                            "error_message": (
-                                result.error_message or "Unknown error"
-                            ),
-                        }
+                    delivery, created = create_notification_delivery(
+                        db,
+                        alert=alert,
+                        monitor=monitor,
+                        event_type="failure",
+                        idempotency_key=(
+                            f"alert:{alert.id}:incident:{ongoing.id}:failure"
+                        ),
+                        error_message=(
+                            result.error_message or "Unknown error"
+                        ),
                     )
+                    if created:
+                        notifications.append(str(delivery.id))
         elif ongoing:
             failure_count = _incident_failure_count(db, ongoing)
             resolved_at = result.checked_at
@@ -325,35 +329,25 @@ def _persist_check_result(
 
             for alert in alerts:
                 if failure_count >= alert.threshold_failures:
-                    notifications.append(
-                        {
-                            "kind": "recovery",
-                            "recipient": alert.recipient,
-                            "monitor_name": monitor.name,
-                            "monitor_url": monitor.url,
-                            "duration_minutes": ongoing.duration_minutes or 0,
-                        }
+                    delivery, created = create_notification_delivery(
+                        db,
+                        alert=alert,
+                        monitor=monitor,
+                        event_type="recovery",
+                        idempotency_key=(
+                            f"alert:{alert.id}:incident:{ongoing.id}:recovery"
+                        ),
+                        duration_minutes=ongoing.duration_minutes or 0,
                     )
+                    if created:
+                        notifications.append(str(delivery.id))
 
     return "recorded", notifications
 
 
-def _send_notifications(notifications: list[dict[str, Any]]) -> None:
-    for notification in notifications:
-        if notification["kind"] == "failure":
-            send_email_alert(
-                recipient=notification["recipient"],
-                monitor_name=notification["monitor_name"],
-                monitor_url=notification["monitor_url"],
-                error_message=notification["error_message"],
-            )
-        else:
-            send_recovery_email(
-                recipient=notification["recipient"],
-                monitor_name=notification["monitor_name"],
-                monitor_url=notification["monitor_url"],
-                duration_minutes=notification["duration_minutes"],
-            )
+def _enqueue_notifications(notifications: list[str]) -> None:
+    for delivery_id in notifications:
+        enqueue_notification_delivery(delivery_id)
 
 
 @celery_app.task
@@ -375,8 +369,8 @@ def check_monitor(monitor_id: str, allow_paused: bool = False):
         logger.exception("Failed to persist check for monitor %s", monitor_id)
         raise
 
-    # Notifications happen only after the database transaction commits.
-    _send_notifications(notifications)
+    # Notification jobs are queued only after the database transaction commits.
+    _enqueue_notifications(notifications)
 
     return {
         "state": state,

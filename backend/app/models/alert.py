@@ -24,6 +24,11 @@ class Alert(Base):
     # Relationships
     user = relationship("User", back_populates="alerts")
     monitor = relationship("Monitor", back_populates="alerts")
+    deliveries = relationship(
+        "NotificationDelivery",
+        back_populates="alert",
+        passive_deletes=True,
+    )
 
     def __repr__(self):
         return f"<Alert(id={self.id}, alert_type={self.alert_type}, recipient={self.recipient})>"
